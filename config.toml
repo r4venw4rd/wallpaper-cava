@@ -1,38 +1,47 @@
+# ===========================================================================
+#  wallpaper-cava  ·  tek config, tek instance, tüm monitörler
+#  Doğrula: wallpaper-cava --config config.toml --check-config
+# ===========================================================================
+
+# --- Genel -----------------------------------------------------------------
 [general]
-framerate = 60
-background_color = { hex = "#000000", alpha = 0.0 }
-sensitivity = 40
-# Single-output filter (legacy). Leave commented to render on EVERY output
-# from this one instance; per-output tuning lives in [outputs.*] below.
+framerate        = 60                              # 1-240
+background_color = { hex = "#000000", alpha = 0.0 } # şeffaf: duvar kağıdı görünür
+sensitivity      = 40                              # cava'ya aynen geçiyor
+
+# Tek monitöre kilitle (eski usul). Boşken HER output'a bir view açılır;
+# ince ayar aşağıdaki [outputs.*] bölümlerinde.
 # preferred_output = "DP-1"
+
+# --- Barlar ----------------------------------------------------------------
 [bars]
-amount = 64
-gap = 0.15
+amount = 64    # 1-1024 (cava, listedeki MAX değerde koşar)
+gap    = 0.15  # bar genişliğinin oranı (0.0-5.0)
 
+# --- Renkler: Mint/Teal -> Cyan -> Deep Blue -> Mauve -----------------------
 [colors]
-# Renk Teorisi: Mint/Teal -> Cyan -> Deep Blue -> Mauve
-gradient_color_1 = { hex = "#94e2d5", alpha = 0.85 }  # Mint Yeşil (Duvar kağıdındaki parlak alt neonlar)
-gradient_color_2 = { hex = "#a6e3a1", alpha = 0.85 }  # Yumuşak Yeşil geçişi
-gradient_color_3 = { hex = "#89dceb", alpha = 0.90 }  # Sky / Camgöbeği
-gradient_color_4 = { hex = "#74c7ec", alpha = 0.90 }  # Sapphire Mavi
-gradient_color_5 = { hex = "#89b4fa", alpha = 0.95 }  # Lavender / Derin Mavi
-gradient_color_6 = { hex = "#b4befe", alpha = 0.95 }  # Light Mavi (Yukarı doğru loşlaşma)
-gradient_color_7 = { hex = "#f5c2e7", alpha = 1.0 }   # Catppuccin Pink (Arka plandaki dikey neonlar)
-gradient_color_8 = { hex = "#cba6f7", alpha = 1.0 }   # Mauve Mor (Tepe noktası - Odanın loşluğuna uyumlu zirve)
+gradient_color_1 = { hex = "#94e2d5", alpha = 0.85 } # Mint      · alt neonlar
+gradient_color_2 = { hex = "#a6e3a1", alpha = 0.85 } # Yeşil     · yumuşak geçiş
+gradient_color_3 = { hex = "#89dceb", alpha = 0.90 } # Sky       · camgöbeği
+gradient_color_4 = { hex = "#74c7ec", alpha = 0.90 } # Sapphire  · mavi
+gradient_color_5 = { hex = "#89b4fa", alpha = 0.95 } # Lavender  · derin mavi
+gradient_color_6 = { hex = "#b4befe", alpha = 0.95 } # Açık mavi · yukarı loşlaşma
+gradient_color_7 = { hex = "#f5c2e7", alpha = 1.0 }  # Pembe     · dikey neonlar
+gradient_color_8 = { hex = "#cba6f7", alpha = 1.0 }  # Mauve     · tepe noktası
 
+# --- Yumuşatma (cava'ya aynen geçiyor) --------------------------------------
 [smoothing]
+# monstercat     = 0    # 0 kapalı
+# waves          = 0    # ham github cava'sında düzgün çalışır
+# noise_reduction = 0.5 # 0 hızlı/noisy · 1 yavaş/pürüzsüz
 
-# ---------------------------------------------------------------------------
-# Per-output overrides. One instance draws on all outputs; each named output
-# gets its own bars/colors, everything else falls back to the globals above.
-# Output names: `hyprctl monitors all` (e.g. DP-1, DP-2, HDMI-A-1).
-# Cava runs at the MAX bars_amount across outputs; smaller views resample.
-# ---------------------------------------------------------------------------
+# --- Monitör bazında ayar ---------------------------------------------------
+# İsimler: `hyprctl monitors all`. Yazılmayan her şey globale düşer.
 
 [outputs."DP-1"]
-# Uses global defaults as-is. Override examples:
-# bars_amount = 96
-# bars_gap = 0.2
+# Globali kullanıyor. Örnekler:
+# bars_amount      = 96
+# bars_gap         = 0.2
 # background_color = { hex = "#000000", alpha = 0.0 }
 # [outputs."DP-1".colors]
 # gradient_color_1 = '#20000077'
