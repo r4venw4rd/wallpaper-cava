@@ -20,9 +20,10 @@ use anyhow::Context;
 use smithay_client_toolkit::reexports::calloop::EventLoop;
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::{globals::registry_queue_init, Connection};
-use wallpaper_cava_application::services::frame::frame_duration;
-use wallpaper_cava_domain::Config;
-use wallpaper_cava_infra::{CavaSource, WallpaperShell};
+use std::time::Duration;
+
+use wallpaper_cava_config::Config;
+use wallpaper_cava_render::{CavaSource, WallpaperShell};
 
 use args::parse_args;
 
@@ -30,6 +31,12 @@ use args::parse_args;
 const VERTEX_SHADER_SRC: &str = include_str!("vertex_shader.glsl");
 /// Fragment shader embedded at compile time.
 const FRAGMENT_SHADER_SRC: &str = include_str!("fragment_shader.glsl");
+
+/// Target time between frames for a validated framerate value.
+#[must_use]
+fn frame_duration(framerate: u32) -> Duration {
+    Duration::from_secs(1) / framerate.max(1)
+}
 
 /// Wire everything and run the Wayland event loop.
 fn run() -> anyhow::Result<()> {

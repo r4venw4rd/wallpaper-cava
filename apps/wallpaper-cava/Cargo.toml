@@ -8,9 +8,9 @@ name = "wallpaper-cava"
 path = "src/main.rs"
 
 [dependencies]
-wallpaper-cava-domain = { path = "../../crates/domain" }
-wallpaper-cava-infra = { path = "../../crates/infra" }
-wallpaper-cava-application = { path = "../../crates/application" }
+wallpaper-cava-config = { path = "../../crates/config" }
+wallpaper-cava-audio = { path = "../../crates/audio" }
+wallpaper-cava-render = { path = "../../crates/render" }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

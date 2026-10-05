@@ -2,7 +2,6 @@
 members = [
     "crates/domain",
     "crates/infra",
-    "crates/application",
     "crates/config",
     "crates/audio",
     "crates/render",
