@@ -1,5 +1,10 @@
 # Wallpaper CAVA (revised fork)
 
+Forked from [rs-pro0/wallpaper-cava](https://github.com/rs-pro0/wallpaper-cava)
+— rewritten as a Cargo workspace (see Layout below) with multi-output
+support. Upstream did the hard part (layer-shell + EGL plumbing); this fork
+keeps the protocol behavior and restructures everything around it.
+
 Spectrum visualizer on the Wayland wallpaper layer (`wlr-layer-shell`,
 `Layer::Bottom`). Spawns `cava` for DSP, renders bars with OpenGL.
 
