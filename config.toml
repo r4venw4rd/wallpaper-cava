@@ -1,0 +1,21 @@
+[general]
+framerate = 60
+background_color = { hex = "#000000", alpha = 0.0 }
+sensitivity = 40
+preferred_output = "DP-1"
+[bars]
+amount = 64
+gap = 0.15
+
+[colors]
+# Renk Teorisi: Mint/Teal -> Cyan -> Deep Blue -> Mauve
+gradient_color_1 = { hex = "#94e2d5", alpha = 0.85 }  # Mint Yeşil (Duvar kağıdındaki parlak alt neonlar)
+gradient_color_2 = { hex = "#a6e3a1", alpha = 0.85 }  # Yumuşak Yeşil geçişi
+gradient_color_3 = { hex = "#89dceb", alpha = 0.90 }  # Sky / Camgöbeği
+gradient_color_4 = { hex = "#74c7ec", alpha = 0.90 }  # Sapphire Mavi
+gradient_color_5 = { hex = "#89b4fa", alpha = 0.95 }  # Lavender / Derin Mavi
+gradient_color_6 = { hex = "#b4befe", alpha = 0.95 }  # Light Mavi (Yukarı doğru loşlaşma)
+gradient_color_7 = { hex = "#f5c2e7", alpha = 1.0 }   # Catppuccin Pink (Arka plandaki dikey neonlar)
+gradient_color_8 = { hex = "#cba6f7", alpha = 1.0 }   # Mauve Mor (Tepe noktası - Odanın loşluğuna uyumlu zirve)
+
+[smoothing]

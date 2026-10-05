@@ -1,0 +1,22 @@
+[package]
+name = "wallpaper-cava"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "wallpaper-cava"
+path = "src/main.rs"
+
+[dependencies]
+wallpaper-cava-domain = { path = "../../crates/domain" }
+wallpaper-cava-infra = { path = "../../crates/infra" }
+wallpaper-cava-application = { path = "../../crates/application" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+gl = { workspace = true }
+khronos-egl = { workspace = true }
+smithay-client-toolkit = { workspace = true }
+wayland-egl = { workspace = true }

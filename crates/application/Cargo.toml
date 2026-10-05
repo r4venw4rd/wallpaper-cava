@@ -1,0 +1,9 @@
+[package]
+name = "wallpaper-cava-application"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wallpaper-cava-domain = { path = "../domain" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
