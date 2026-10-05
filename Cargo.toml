@@ -3,6 +3,7 @@ members = [
     "crates/domain",
     "crates/infra",
     "crates/application",
+    "crates/config",
     "apps/wallpaper-cava",
 ]
 resolver = "2"
