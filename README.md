@@ -17,11 +17,13 @@ To find your output names: `hyprctl monitors all` (Hyprland),
 
 ## Layout (Cargo workspace)
 
-- `crates/domain` — pure logic: validated config newtypes, color parsing,
-  bar geometry, cava frame decoding, `AudioSource` port. No IO.
-- `crates/infra` — adapters: cava child process, GL helpers, Wayland shell.
-  The only place with `unsafe` (every block has a `// SAFETY:` note).
-- `crates/application` — `FrameService`: port + domain wiring, stub-tested.
+- `crates/config` — validated config newtypes, file shape, `ConfigError`.
+  No IO.
+- `crates/audio` — cava child process, frame decoding, resampling,
+  `AudioError`. One `cava` feeds every view.
+- `crates/render` — bar geometry, gradients, per-output resolution,
+  Wayland shell + GL (`RenderError`). The only place with `unsafe`
+  (every block has a `// SAFETY:` note).
 - `apps/wallpaper-cava` — thin binary: CLI, config, logging, DI wiring.
 
 Rules enforced by the compiler: no `unwrap`/`expect`/`panic`, no `println!`

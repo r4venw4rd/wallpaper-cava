@@ -838,43 +838,46 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "wallpaper-cava-application",
- "wallpaper-cava-domain",
- "wallpaper-cava-infra",
+ "wallpaper-cava-audio",
+ "wallpaper-cava-config",
+ "wallpaper-cava-render",
  "wayland-egl",
 ]
 
 [[package]]
-name = "wallpaper-cava-application"
-version = "0.1.0"
-dependencies = [
- "thiserror 1.0.69",
- "tracing",
- "wallpaper-cava-domain",
-]
-
-[[package]]
-name = "wallpaper-cava-domain"
+name = "wallpaper-cava-audio"
 version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
  "thiserror 1.0.69",
  "toml",
+ "tracing",
+ "wallpaper-cava-config",
 ]
 
 [[package]]
-name = "wallpaper-cava-infra"
+name = "wallpaper-cava-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 1.0.69",
+ "toml",
+]
+
+[[package]]
+name = "wallpaper-cava-render"
 version = "0.1.0"
 dependencies = [
  "gl",
  "khronos-egl",
- "serde",
+ "proptest",
  "smithay-client-toolkit",
  "thiserror 1.0.69",
  "toml",
  "tracing",
- "wallpaper-cava-domain",
+ "wallpaper-cava-audio",
+ "wallpaper-cava-config",
  "wayland-egl",
 ]
 
