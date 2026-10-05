@@ -62,40 +62,31 @@ const CONTEXT_ATTRIBUTES: [i32; 7] = [
     egl::NONE,
 ];
 
-/// Wallpaper surface: owns the layer surface, EGL state, GL objects, and
-/// the audio source. Created by [`WallpaperShell::create`].
+/// Wallpaper shell: one `wlr-layer-shell` surface per bound output, all
+/// sharing a single EGL context and GL program. Created by
+/// [`WallpaperShell::create`].
 pub struct WallpaperShell {
     /// Registry state (SCTK requirement).
     registry_state: RegistryState,
     /// Output state (SCTK requirement).
     output_state: OutputState,
-    /// Current surface width (px).
-    width: u32,
-    /// Current surface height (px).
-    height: u32,
     /// Layer-shell protocol object.
     layer_shell: LayerShell,
-    /// Active layer surface.
-    layer_surface: LayerSurface,
-    /// Active Wayland surface.
-    surface: WlSurface,
+    /// Compositor handle (for creating surfaces as outputs appear).
+    compositor: CompositorState,
     /// Spectrum source (cava child).
     cava: CavaSource,
-    /// EGL window binding (resized in place on configure).
-    wl_egl_surface: WlEglSurface,
-    /// Current EGL surface.
-    egl_surface: egl::Surface,
-    /// Chosen EGL config (reused when rebinding outputs).
+    /// Chosen EGL config (shared by all views).
     egl_config: egl::Config,
     /// Shared EGL context.
     egl_context: egl::Context,
     /// EGL display connection.
     egl_display: egl::Display,
-    /// Linked GL program.
+    /// Linked GL program (shared by all views).
     shader_program: u32,
-    /// Vertex array object.
+    /// Vertex array object (shared by all views).
     vao: u32,
-    /// Vertex buffer object (refilled every frame).
+    /// Vertex buffer object (refilled every frame, shared by all views).
     vbo: u32,
     /// `WindowSize` uniform location.
     window_size_location: i32,
@@ -105,30 +96,51 @@ pub struct WallpaperShell {
     gap: GapRatio,
     /// Clear color.
     background: Rgba,
-    /// Preferred output name, if configured.
+    /// Preferred output name: when set, only that output gets a view
+    /// (run one instance per monitor, each with its own config).
+    /// When unset, every output gets a view.
     preferred_output: Option<String>,
-    /// Compositor handle (for re-creating surfaces on output changes).
-    compositor: CompositorState,
-    /// True once the current surface received its initial configure.
-    configured: bool,
+    /// Pre-bind placeholder surface. Holds the EGL context current for GL
+    /// setup; retired when the first real view binds.
+    setup: Option<SetupSurface>,
+    /// One live surface per bound output.
+    views: Vec<OutputView>,
 }
 
-/// Parameters for [`WallpaperShell::create`] beyond connection handles.
-pub struct ShellParams {
-    /// Validated bar count.
-    pub bar_count: BarCount,
-    /// Validated gap ratio.
-    pub gap: GapRatio,
-    /// Clear color.
-    pub background: Rgba,
-    /// Preferred output name.
-    pub preferred_output: Option<String>,
-    /// Packed gradient SSBO bytes (domain layout).
-    pub gradient_bytes: Vec<u8>,
-    /// Vertex shader source.
-    pub vertex_src: String,
-    /// Fragment shader source.
-    pub fragment_src: String,
+/// Pre-bind placeholder: an unplaced layer surface used only to hold the
+/// EGL context current while GL objects are created.
+struct SetupSurface {
+    /// Placeholder Wayland surface.
+    surface: WlSurface,
+    /// Placeholder layer surface.
+    layer_surface: LayerSurface,
+    /// Placeholder EGL window binding.
+    wl_egl_surface: WlEglSurface,
+    /// Placeholder EGL surface.
+    egl_surface: egl::Surface,
+}
+
+/// One bound output: its own layer surface + EGL surface, sharing the
+/// shell's context, program, and buffers.
+struct OutputView {
+    /// Wayland output this view renders on.
+    output: WlOutput,
+    /// Output name at bind time (for logs).
+    name: Option<String>,
+    /// View Wayland surface.
+    surface: WlSurface,
+    /// View layer surface.
+    layer_surface: LayerSurface,
+    /// View EGL window binding (resized in place on configure).
+    wl_egl_surface: WlEglSurface,
+    /// View EGL surface.
+    egl_surface: egl::Surface,
+    /// Current width (px).
+    width: u32,
+    /// Current height (px).
+    height: u32,
+    /// True once the compositor sent the initial configure.
+    configured: bool,
 }
 
 /// Validated shell parameters (helper to keep [`WallpaperShell::create`]
@@ -347,14 +359,9 @@ impl WallpaperShell {
         Ok(Self {
             registry_state: RegistryState::new(globals),
             output_state: OutputState::new(globals, qh),
-            width: PLACEHOLDER_SIZE,
-            height: PLACEHOLDER_SIZE,
             layer_shell,
-            layer_surface,
-            surface,
+            compositor,
             cava,
-            wl_egl_surface,
-            egl_surface,
             egl_config,
             egl_context,
             egl_display,
@@ -366,30 +373,49 @@ impl WallpaperShell {
             gap: params.gap,
             background: params.background,
             preferred_output: params.preferred_output,
-            compositor,
-            configured: false,
+            setup: Some(SetupSurface {
+                surface,
+                layer_surface,
+                wl_egl_surface,
+                egl_surface,
+            }),
+            views: Vec::new(),
         })
     }
 
-    /// Render one frame from the next audio levels.
+    /// Render one frame on every configured view.
+    ///
+    /// Vertices are computed once, uploaded once, then drawn once per
+    /// view (each view is current in turn — one shared context).
     ///
     /// # Errors
     /// Returns [`InfraError`] when the audio source, GL upload, or buffer
     /// swap fails. Handlers log and continue instead of propagating.
-    #[instrument(skip(self, _conn, qh), fields(w = self.width, h = self.height))]
+    #[instrument(skip(self, _conn, qh), fields(views = self.views.len()))]
     pub fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) -> Result<(), InfraError> {
+        let mut active: Vec<usize> = self
+            .views
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.configured)
+            .map(|(i, _)| i)
+            .collect();
+        if active.is_empty() {
+            return Ok(());
+        }
+        // Deterministic order: stable frame pacing across outputs.
+        active.sort_unstable();
         let levels = self.cava.next_levels()?;
         let vertices = vertices_for_levels(&levels, self.bar_count, self.gap)?;
         let indices = indices_for_bars(self.bar_count);
         let vertex_bytes = (vertices.len() * std::mem::size_of::<f32>()).cast_signed();
         let index_count = GLsizei::try_from(indices.len())
             .map_err(|_| InfraError::Gl("index count does not fit GLsizei".to_string()))?;
-        // Surface sizes are compositor-provided pixels, far below 2^24:
-        // the f32 conversion is exact.
-        #[allow(clippy::cast_precision_loss)]
-        let (fw, fh) = (self.width as f32, self.height as f32);
+        // Upload once, on the first view's surface.
+        let first = active[0];
+        self.make_view_current(first)?;
         // SAFETY: `vao`/`vbo` are live objects owned by `self`; `vertices`
-        // outlives the synchronous upload; counts describe the slices.
+        // outlives the synchronous upload; the size describes the slice.
         unsafe {
             gl::BindVertexArray(self.vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
@@ -401,6 +427,41 @@ impl WallpaperShell {
             );
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BindVertexArray(0);
+        }
+        for i in active {
+            self.draw_view(i, index_count, qh)?;
+        }
+        Ok(())
+    }
+
+    /// Make `views[i]` current on the shared context.
+    fn make_view_current(&self, i: usize) -> Result<(), InfraError> {
+        egl_api
+            .make_current(
+                self.egl_display,
+                Some(self.views[i].egl_surface),
+                Some(self.views[i].egl_surface),
+                Some(self.egl_context),
+            )
+            .map_err(|e| InfraError::Egl(format!("make_current: {e:?}")))
+    }
+
+    /// Draw the already-uploaded frame on one view and swap its buffers.
+    #[allow(clippy::cast_precision_loss)] // compositor pixels, far below 2^24: exact.
+    fn draw_view(
+        &mut self,
+        i: usize,
+        index_count: GLsizei,
+        qh: &QueueHandle<Self>,
+    ) -> Result<(), InfraError> {
+        let view = &self.views[i];
+        let (w, h) = (view.width, view.height);
+        self.make_view_current(i)?;
+        // SAFETY: context is current for this view; counts describe the
+        // shared buffers uploaded in `draw`.
+        unsafe {
+            gl::BindVertexArray(self.vao);
             gl::ClearColor(
                 self.background.r(),
                 self.background.g(),
@@ -409,7 +470,7 @@ impl WallpaperShell {
             );
             gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::UseProgram(self.shader_program);
-            gl::Uniform2f(self.window_size_location, fw, fh);
+            gl::Uniform2f(self.window_size_location, w as f32, h as f32);
             gl::DrawElements(gl::TRIANGLES, index_count, gl::UNSIGNED_SHORT, ptr::null());
             gl::BindVertexArray(0);
         }
@@ -417,80 +478,110 @@ impl WallpaperShell {
         // (eglSwapBuffers commits the wl_surface). A callback requested
         // after the commit stays pending until the next commit, which never
         // comes -> single frozen frame.
-        self.surface.frame(qh, self.surface.clone());
+        self.views[i]
+            .surface
+            .frame(qh, self.views[i].surface.clone());
         egl_api
-            .swap_buffers(self.egl_display, self.egl_surface)
+            .swap_buffers(self.egl_display, self.views[i].egl_surface)
             .map_err(|e| InfraError::Egl(format!("swap_buffers: {e:?}")))?;
         Ok(())
     }
 
-    /// Tear down the current EGL surface and re-create it on `output`.
+    /// Drop the setup placeholder (its EGL surface first, then the Wayland
+    /// objects via `Drop`). Called once, when the first real view binds.
+    fn retire_setup(&mut self) {
+        if let Some(setup) = self.setup.take() {
+            if let Err(e) = egl_api.make_current(self.egl_display, None, None, None) {
+                error!(
+                    error = format!("{e:?}"),
+                    "make_current(None) during setup retire"
+                );
+            }
+            if let Err(e) = egl_api.destroy_surface(self.egl_display, setup.egl_surface) {
+                error!(error = format!("{e:?}"), "destroy setup EGL surface");
+            }
+            setup.surface.destroy();
+            // Explicit drop order: EGL window binding, then layer surface.
+            drop(setup.wl_egl_surface);
+            drop(setup.layer_surface);
+        }
+    }
+
+    /// Create a fresh surface + layer surface + EGL surface on `output`.
     ///
     /// # Errors
-    /// Returns [`InfraError`] when surface creation or EGL rebind fails.
+    /// Returns [`InfraError`] when surface creation or EGL binding fails.
     #[allow(clippy::ptr_as_ptr)]
-    fn rebind_to_output(
+    fn bind_view(
         &mut self,
         qh: &QueueHandle<Self>,
         output: &WlOutput,
+        name: Option<String>,
         width: u32,
         height: u32,
     ) -> Result<(), InfraError> {
-        egl_api
-            .make_current(self.egl_display, None, None, None)
-            .map_err(|e| InfraError::Egl(format!("make_current(None): {e:?}")))?;
-        egl_api
-            .destroy_surface(self.egl_display, self.egl_surface)
-            .map_err(|e| InfraError::Egl(format!("destroy_surface: {e:?}")))?;
-        let old_surface = self.surface.clone();
-        self.surface = self.compositor.create_surface(qh);
+        self.retire_setup();
+        let surface = self.compositor.create_surface(qh);
         let empty_region = self.compositor.wl_compositor().create_region(qh, ());
-        self.surface.set_input_region(Some(&empty_region));
+        surface.set_input_region(Some(&empty_region));
         empty_region.destroy();
-        self.layer_surface = self.layer_shell.create_layer_surface(
+        let layer_surface = self.layer_shell.create_layer_surface(
             qh,
-            self.surface.clone(),
+            surface.clone(),
             Layer::Bottom,
             Some("wallpaper-cava"),
             Some(output),
         );
-        self.configured = false;
-        self.width = width;
-        self.height = height;
-        self.layer_surface.set_size(self.width, self.height);
-        self.layer_surface.set_anchor(Anchor::TOP);
-        self.surface.commit();
-        self.wl_egl_surface = WlEglSurface::new(
-            self.surface.id(),
-            self.width.cast_signed(),
-            self.height.cast_signed(),
-        )
-        .map_err(|e| InfraError::Wayland(e.to_string()))?;
-        // SAFETY: fresh `wl_egl_surface`, same contract as in `create`
-        // (EGL C API takes the native window as `void *`).
-        self.egl_surface = unsafe {
+        layer_surface.set_size(width, height);
+        layer_surface.set_anchor(Anchor::TOP);
+        surface.commit();
+        let wl_egl_surface =
+            WlEglSurface::new(surface.id(), width.cast_signed(), height.cast_signed())
+                .map_err(|e| InfraError::Wayland(e.to_string()))?;
+        // SAFETY: fresh `wl_egl_surface`; the EGL surface is destroyed
+        // before it on unbind. The `void *` cast matches the EGL C API.
+        let egl_surface = unsafe {
             egl_api
                 .create_window_surface(
                     self.egl_display,
                     self.egl_config,
-                    self.wl_egl_surface.ptr() as egl::NativeWindowType,
+                    wl_egl_surface.ptr() as egl::NativeWindowType,
                     None,
                 )
                 .map_err(|e| InfraError::Egl(format!("create_window_surface: {e:?}")))?
         };
-        egl_api
-            .make_current(
-                self.egl_display,
-                Some(self.egl_surface),
-                Some(self.egl_surface),
-                Some(self.egl_context),
-            )
-            .map_err(|e| InfraError::Egl(format!("make_current: {e:?}")))?;
-        old_surface.destroy();
+        self.views.push(OutputView {
+            output: output.clone(),
+            name,
+            surface,
+            layer_surface,
+            wl_egl_surface,
+            egl_surface,
+            width,
+            height,
+            configured: false,
+        });
         Ok(())
     }
 
-    /// Decide whether `output_name` should trigger a (re)bind.
+    /// Remove the view bound to `output`, if any, and destroy its EGL
+    /// surface. Wayland objects die with the removed view.
+    fn unbind_view(&mut self, output: &WlOutput) {
+        if let Some(pos) = self.views.iter().position(|v| v.output == *output) {
+            let view = self.views.remove(pos);
+            info!(output = ?view.name, "output removed, unbinding view");
+            if let Err(e) = egl_api.make_current(self.egl_display, None, None, None) {
+                error!(error = format!("{e:?}"), "make_current(None) during unbind");
+            }
+            if let Err(e) = egl_api.destroy_surface(self.egl_display, view.egl_surface) {
+                error!(error = format!("{e:?}"), "destroy view EGL surface");
+            }
+            view.surface.destroy();
+            // Layer/WlEgl objects release on drop, after the EGL surface.
+        }
+    }
+
+    /// Decide whether `output_name` should get a view.
     fn wants_output(&self, output_name: Option<&str>) -> bool {
         match (&self.preferred_output, output_name) {
             (Some(want), Some(got)) => want == got,
@@ -499,33 +590,62 @@ impl WallpaperShell {
         }
     }
 
-    /// Shared body for `new_output` / `update_output`.
-    fn handle_output(&mut self, qh: &QueueHandle<Self>, output: &WlOutput) {
+    /// Logical size of `output`, or `None` when the compositor reports
+    /// nothing usable.
+    fn output_size(&self, output: &WlOutput) -> Option<(u32, u32)> {
+        let info = self.output_state.info(output)?;
+        let (w, h) = info.logical_size?;
+        match (u32::try_from(w.max(1)), u32::try_from(h.max(1))) {
+            (Ok(width), Ok(height)) => Some((width, height)),
+            _ => None,
+        }
+    }
+
+    /// A (possibly new) output announced itself: bind it unless filtered
+    /// out or already bound. Never rebinds an existing view.
+    fn on_new_output(&mut self, qh: &QueueHandle<Self>, output: &WlOutput) {
         let name: Option<String> = self.output_state.info(output).and_then(|i| i.name);
         if !self.wants_output(name.as_deref()) {
             debug!(output = ?name, "ignoring non-preferred output");
             return;
         }
-        let Some(info) = self.output_state.info(output) else {
-            error!("output info unavailable, skipping bind");
+        if self.views.iter().any(|v| v.output == *output) {
+            debug!(output = ?name, "output already bound, skipping");
+            return;
+        }
+        let Some((width, height)) = self.output_size(output) else {
+            error!(output = ?name, "output has no usable size, skipping bind");
             return;
         };
-        let Some((w, h)) = info.logical_size else {
-            error!("output has no logical size, skipping bind");
-            return;
-        };
-        let Ok(width) = u32::try_from(w.max(1)) else {
-            error!(w, h, "output width does not fit u32, skipping bind");
-            return;
-        };
-        let Ok(height) = u32::try_from(h.max(1)) else {
-            error!(w, h, "output height does not fit u32, skipping bind");
-            return;
-        };
-        if let Err(e) = self.rebind_to_output(qh, output, width, height) {
-            error!(error = %e, "failed to bind output");
+        if let Err(e) = self.bind_view(qh, output, name.clone(), width, height) {
+            error!(error = %e, output = ?name, "failed to bind output");
         } else {
             info!(output = ?name, width, height, "bound to output");
+        }
+    }
+
+    /// An output changed (mode/scale): resize its view in place when the
+    /// size actually moved. No surface re-creation, no flicker.
+    /// Unknown outputs fall through to [`Self::on_new_output`].
+    fn on_update_output(&mut self, qh: &QueueHandle<Self>, output: &WlOutput) {
+        if !self.views.iter().any(|v| v.output == *output) {
+            self.on_new_output(qh, output);
+            return;
+        }
+        let Some((width, height)) = self.output_size(output) else {
+            error!("updated output has no usable size, keeping current");
+            return;
+        };
+        if let Some(view) = self.views.iter_mut().find(|v| v.output == *output) {
+            if view.width != width || view.height != height {
+                info!(output = ?view.name, width, height, "output resized");
+                view.width = width;
+                view.height = height;
+                view.layer_surface.set_size(width, height);
+                view.surface.commit();
+                view.wl_egl_surface
+                    .resize(width.cast_signed(), height.cast_signed(), 0, 0);
+            }
         }
     }
 }
@@ -538,14 +658,15 @@ impl OutputHandler for WallpaperShell {
     }
 
     fn new_output(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, output: WlOutput) {
-        self.handle_output(qh, &output);
+        self.on_new_output(qh, &output);
     }
 
     fn update_output(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, output: WlOutput) {
-        self.handle_output(qh, &output);
+        self.on_update_output(qh, &output);
     }
 
-    fn output_destroyed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: WlOutput) {
+    fn output_destroyed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, output: WlOutput) {
+        self.unbind_view(&output);
     }
 }
 
@@ -589,10 +710,14 @@ impl CompositorHandler for WallpaperShell {
         surface: &smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface,
         _time: u32,
     ) {
-        // Ignore callbacks left over from a replaced surface: drawing then
-        // would attach a buffer to a not-yet-configured layer surface,
-        // which is a protocol error and kills the connection.
-        if *surface == self.surface && self.configured {
+        // Ignore callbacks from unknown surfaces (e.g. the retired setup
+        // surface): drawing there would be a protocol error and kill the
+        // connection. Any known configured view triggers a full redraw.
+        let known = self
+            .views
+            .iter()
+            .any(|v| v.configured && v.surface == *surface);
+        if known {
             if let Err(e) = self.draw(conn, qh) {
                 error!(error = %e, "frame draw failed");
             }
@@ -629,33 +754,25 @@ impl LayerShellHandler for WallpaperShell {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        if layer != &self.layer_surface {
+        let Some(view) = self.views.iter_mut().find(|v| v.layer_surface == *layer) else {
+            // Configure for an unknown (already unbound) surface.
             return;
-        }
+        };
         // SCTK acks the configure before dispatching, so the surface may
         // now receive a buffer.
-        self.configured = true;
+        view.configured = true;
         // A size of 0 means "client decides": keep the current size then.
-        let width = if configure.new_size.0 != 0 {
-            configure.new_size.0
-        } else {
-            self.width
-        };
-        let height = if configure.new_size.1 != 0 {
-            configure.new_size.1
-        } else {
-            self.height
-        };
-        info!(width, height, "layer surface configured");
-        self.width = width;
-        self.height = height;
-        self.wl_egl_surface
-            .resize(self.width.cast_signed(), self.height.cast_signed(), 0, 0);
-        // SAFETY: GL context is current on this thread; dimensions are the
-        // live surface size.
-        unsafe {
-            gl::Viewport(0, 0, self.width.cast_signed(), self.height.cast_signed());
+        if configure.new_size.0 != 0 {
+            view.width = configure.new_size.0;
         }
+        if configure.new_size.1 != 0 {
+            view.height = configure.new_size.1;
+        }
+        let (width, height, name) = (view.width, view.height, view.name.clone());
+        info!(?name, width, height, "layer surface configured");
+        view.wl_egl_surface
+            .resize(width.cast_signed(), height.cast_signed(), 0, 0);
+        view.surface.commit();
         if let Err(e) = self.draw(conn, qh) {
             error!(error = %e, "initial draw after configure failed");
         }

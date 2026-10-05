@@ -32,26 +32,52 @@ const FRAGMENT_SHADER_SRC: &str = include_str!("fragment_shader.glsl");
 #[allow(clippy::print_stdout)]
 fn print_help() {
     println!("Command line options");
-    println!("--config path");
+    println!("--config path [--check-config]");
+    println!("--check-config validates the config and exits without Wayland");
 }
 
-/// Resolve which config file to load from `argv`.
-///
-/// Supports `--config <path>`, otherwise `$HOME/.config/wallpaper-cava/config.toml`
-/// when present, falling back to `./config.toml`.
-fn resolve_config_path(args: &[String]) -> String {
-    if args.len() == 3 && args[1] == "--config" {
-        return args[2].clone();
+/// Parsed CLI arguments.
+struct Args {
+    /// Config file path.
+    config_path: String,
+    /// Only validate the config, don't start the visualizer.
+    check_only: bool,
+}
+
+/// Parse `argv` into [`Args`]. Exits `0` after printing help on misuse.
+fn parse_args(argv: &[String]) -> Args {
+    let mut config_path: Option<String> = None;
+    let mut check_only = false;
+    let mut i = 1;
+    while i < argv.len() {
+        match argv[i].as_str() {
+            "--check-config" => check_only = true,
+            "--config" => {
+                i += 1;
+                if i >= argv.len() {
+                    print_help();
+                    std::process::exit(0);
+                }
+                config_path = Some(argv[i].clone());
+            }
+            _ => {
+                print_help();
+                std::process::exit(0);
+            }
+        }
+        i += 1;
     }
-    if args.len() != 1 {
-        print_help();
-        std::process::exit(0);
+    let config_path = config_path.unwrap_or_else(|| {
+        std::env::var("HOME")
+            .map(|home| format!("{home}/.config/wallpaper-cava/config.toml"))
+            .ok()
+            .filter(|path| fs::metadata(path).is_ok())
+            .unwrap_or_else(|| "config.toml".to_string())
+    });
+    Args {
+        config_path,
+        check_only,
     }
-    std::env::var("HOME")
-        .map(|home| format!("{home}/.config/wallpaper-cava/config.toml"))
-        .ok()
-        .filter(|path| fs::metadata(path).is_ok())
-        .unwrap_or_else(|| "config.toml".to_string())
 }
 
 /// Wire everything and run the Wayland event loop.
@@ -63,23 +89,35 @@ fn run() -> anyhow::Result<()> {
         )
         .init();
 
-    let args: Vec<String> = std::env::args().collect();
-    let config_path = resolve_config_path(&args);
-    let config_str = fs::read_to_string(&config_path)
-        .with_context(|| format!("reading config file {config_path}"))?;
-    let config: Config =
-        toml::from_str(&config_str).with_context(|| format!("parsing config {config_path}"))?;
+    let raw: Vec<String> = std::env::args().collect();
+    let args = parse_args(&raw);
+    let config_str = fs::read_to_string(&args.config_path)
+        .with_context(|| format!("reading config file {}", args.config_path))?;
+    let config: Config = toml::from_str(&config_str)
+        .with_context(|| format!("parsing config {}", args.config_path))?;
 
     // Fail fast on invalid ranges before touching Wayland/EGL.
     let bar_count = config.bar_count()?;
     let framerate = config.framerate()?;
-    let frame_duration = Duration::from_secs(1) / framerate.get();
-
+    let gap = config.gap_ratio()?;
     let params = WallpaperShell::collect_params(
         &config,
         VERTEX_SHADER_SRC.to_string(),
         FRAGMENT_SHADER_SRC.to_string(),
     )?;
+    if args.check_only {
+        tracing::info!(
+            config = %args.config_path,
+            bars = bar_count.get(),
+            framerate = framerate.get(),
+            gap = gap.get(),
+            output = ?config.general.preferred_output,
+            "config OK"
+        );
+        return Ok(());
+    }
+    let frame_duration = Duration::from_secs(1) / framerate.get();
+
     let cava = CavaSource::spawn(&config, bar_count)?;
 
     let conn = Connection::connect_to_env().context("connecting to Wayland")?;
