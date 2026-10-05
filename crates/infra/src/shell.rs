@@ -496,6 +496,10 @@ impl WallpaperShell {
 
     /// Drop the setup placeholder (its EGL surface first, then the Wayland
     /// objects via `Drop`). Called once, when the first real view binds.
+    ///
+    /// Order matters: the layer role object must die BEFORE its
+    /// `wl_surface` — the reverse is a protocol error and the compositor
+    /// kills the connection (`invalid object`).
     fn retire_setup(&mut self) {
         if let Some(setup) = self.setup.take() {
             if let Err(e) = egl_api.make_current(self.egl_display, None, None, None) {
@@ -507,10 +511,11 @@ impl WallpaperShell {
             if let Err(e) = egl_api.destroy_surface(self.egl_display, setup.egl_surface) {
                 error!(error = format!("{e:?}"), "destroy setup EGL surface");
             }
-            setup.surface.destroy();
-            // Explicit drop order: EGL window binding, then layer surface.
+            // Explicit drop order: EGL window binding, then layer role,
+            // and only then the wl_surface itself.
             drop(setup.wl_egl_surface);
             drop(setup.layer_surface);
+            setup.surface.destroy();
         }
     }
 
@@ -586,7 +591,8 @@ impl WallpaperShell {
     }
 
     /// Remove the view bound to `output`, if any, and destroy its EGL
-    /// surface. Wayland objects die with the removed view.
+    /// surface. Wayland objects die with the removed view — layer role
+    /// before `wl_surface` (see [`Self::retire_setup`]).
     fn unbind_view(&mut self, output: &WlOutput) {
         if let Some(pos) = self.views.iter().position(|v| v.output == *output) {
             let view = self.views.remove(pos);
@@ -597,8 +603,9 @@ impl WallpaperShell {
             if let Err(e) = egl_api.destroy_surface(self.egl_display, view.egl_surface) {
                 error!(error = format!("{e:?}"), "destroy view EGL surface");
             }
+            drop(view.wl_egl_surface);
+            drop(view.layer_surface);
             view.surface.destroy();
-            // Layer/WlEgl objects release on drop, after the EGL surface.
         }
     }
 
