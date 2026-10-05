@@ -6,6 +6,8 @@
 
 pub mod config;
 pub mod source;
+#[cfg(test)]
+mod tests;
 
 pub use config::cava_config_toml;
 pub use source::CavaSource;

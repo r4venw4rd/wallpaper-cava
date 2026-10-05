@@ -21,6 +21,17 @@ pub struct CavaSource {
 }
 
 impl CavaSource {
+    /// Cava binary path: `$CAVA_BIN` when set and non-blank, else `cava`
+    /// resolved from `PATH`. The env override pins an absolute path so a
+    /// hostile `PATH` entry cannot redirect the spawn.
+    #[must_use]
+    pub fn binary() -> String {
+        std::env::var("CAVA_BIN")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "cava".to_string())
+    }
+
     /// Spawn `cava` running at `bars` (see [`cava_bars`]).
     ///
     /// [`cava_bars`]: wallpaper_cava_domain::cava_bars
@@ -31,13 +42,15 @@ impl CavaSource {
     #[instrument(skip(config), fields(bars = bars.get()))]
     pub fn spawn(config: &Config, bars: BarCount) -> Result<Self, InfraError> {
         let toml = cava_config_toml(config, bars)?;
-        let mut child = Command::new("cava")
+        let binary = Self::binary();
+        tracing::info!(binary = %binary, "spawning cava");
+        let mut child = Command::new(&binary)
             .arg("-p")
             .arg("/dev/stdin")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| InfraError::Cava(format!("failed to spawn cava: {e}")))?;
+            .map_err(|e| InfraError::Cava(format!("failed to spawn {binary}: {e}")))?;
         let stdin = child
             .stdin
             .take()
