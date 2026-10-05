@@ -194,12 +194,31 @@ pub struct SmoothingConfig {
 pub struct Config {
     /// General section.
     pub general: GeneralConfig,
-    /// Bars section.
+    /// Bars section (global defaults).
     pub bars: BarConfig,
-    /// Gradient stops, keyed `gradient_color_N`.
+    /// Gradient stops, keyed `gradient_color_N` (global defaults).
     pub colors: std::collections::HashMap<String, ConfigColor>,
     /// Smoothing section.
     pub smoothing: SmoothingConfig,
+    /// Per-output overrides, keyed by Wayland output name
+    /// (`[outputs."DP-1"]`). Absent for old configs.
+    #[serde(default)]
+    pub outputs: std::collections::HashMap<String, OutputConfig>,
+}
+
+/// Per-output overrides (`[outputs."DP-1"]`). Every field is optional;
+///
+/// anything unset falls back to the global sections.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OutputConfig {
+    /// Clear color override.
+    pub background_color: Option<ConfigColor>,
+    /// Bar count override.
+    pub bars_amount: Option<u32>,
+    /// Gap ratio override.
+    pub bars_gap: Option<f32>,
+    /// Gradient stops override, keyed `gradient_color_N`.
+    pub colors: Option<std::collections::HashMap<String, ConfigColor>>,
 }
 
 impl Config {

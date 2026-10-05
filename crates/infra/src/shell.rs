@@ -3,6 +3,7 @@
 //! This is the platform adapter. Protocol errors are returned, never
 //! panicked; frame-callback failures are logged and the loop continues.
 
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ptr;
 
@@ -24,8 +25,8 @@ use smithay_client_toolkit::{
 };
 use tracing::{debug, error, info, instrument};
 use wallpaper_cava_domain::{
-    array_from_config_color, gradient_ssbo_bytes, indices_for_bars, vertices_for_levels,
-    AudioSource, BarCount, Config, GapRatio, Rgba,
+    gradient_ssbo_bytes, indices_for_bars, resample_levels, resolve_output, vertices_for_levels,
+    AudioSource, BarCount, Config, GapRatio, ResolvedOutput, Rgba,
 };
 use wayland_egl::WlEglSurface;
 
@@ -86,16 +87,16 @@ pub struct WallpaperShell {
     shader_program: u32,
     /// Vertex array object (shared by all views).
     vao: u32,
-    /// Vertex buffer object (refilled every frame, shared by all views).
+    /// Vertex buffer object (refilled per view, every frame).
     vbo: u32,
+    /// Gradient SSBO (refilled per view, every frame).
+    ssbo: u32,
     /// `WindowSize` uniform location.
     window_size_location: i32,
-    /// Validated bar count.
-    bar_count: BarCount,
-    /// Validated gap ratio.
-    gap: GapRatio,
-    /// Clear color.
-    background: Rgba,
+    /// Global default settings (unnamed outputs).
+    default: ResolvedOutput,
+    /// Per-output settings, keyed by output name.
+    outputs: HashMap<String, ResolvedOutput>,
     /// Preferred output name: when set, only that output gets a view
     /// (run one instance per monitor, each with its own config).
     /// When unset, every output gets a view.
@@ -141,20 +142,31 @@ struct OutputView {
     height: u32,
     /// True once the compositor sent the initial configure.
     configured: bool,
+    /// Bar count for this view.
+    bars: BarCount,
+    /// Index count (`bars * 6`) for this view. Valid because per-bar
+    /// indices form a prefix of the max-bars buffer uploaded at setup.
+    index_count: GLsizei,
+    /// Gap ratio for this view.
+    gap: GapRatio,
+    /// Clear color for this view.
+    background: Rgba,
+    /// Packed gradient SSBO bytes for this view.
+    gradient_bytes: Vec<u8>,
 }
 
 /// Validated shell parameters (helper to keep [`WallpaperShell::create`]
 /// honest about what it needs).
 pub struct SelfParams {
-    /// Validated bar count.
-    pub bar_count: BarCount,
-    /// Validated gap ratio.
-    pub gap: GapRatio,
-    /// Clear color.
-    pub background: Rgba,
-    /// Preferred output name.
+    /// Bar count cava must run at (max over all views).
+    pub cava_bars: BarCount,
+    /// Global default settings.
+    pub default: ResolvedOutput,
+    /// Per-output settings, keyed by output name.
+    pub outputs: HashMap<String, ResolvedOutput>,
+    /// Preferred output name (single-view filter, kept for compatibility).
     pub preferred_output: Option<String>,
-    /// Packed gradient SSBO bytes.
+    /// Packed gradient SSBO bytes for the default (setup upload).
     pub gradient_bytes: Vec<u8>,
     /// Vertex shader source.
     pub vertex_src: String,
@@ -165,8 +177,8 @@ pub struct SelfParams {
 impl WallpaperShell {
     /// Collect validated render parameters from a [`Config`].
     ///
-    /// Gradient stops are sorted by key so `gradient_color_10` cannot
-    /// silently land before `gradient_color_2` (`HashMap` order is random).
+    /// Resolves the global default plus every `[outputs."NAME"]` section
+    /// via pure domain logic.
     ///
     /// # Errors
     /// Returns [`InfraError`] on malformed colors or out-of-range values.
@@ -175,27 +187,19 @@ impl WallpaperShell {
         vertex_src: String,
         fragment_src: String,
     ) -> Result<SelfParams, InfraError> {
-        let bar_count = config.bar_count()?;
-        let gap = config.gap_ratio()?;
-        let background = array_from_config_color(&config.general.background_color)?;
-        let mut stops: Vec<(&String, &wallpaper_cava_domain::ConfigColor)> =
-            config.colors.iter().collect();
-        stops.sort_by(|a, b| a.0.cmp(b.0));
-        let mut rgba = Vec::with_capacity(stops.len());
-        for (_, color) in stops {
-            rgba.push(array_from_config_color(color)?);
+        let default = resolve_output(None, config)?;
+        let mut outputs = HashMap::with_capacity(config.outputs.len());
+        for name in config.outputs.keys() {
+            outputs.insert(name.clone(), resolve_output(Some(name), config)?);
         }
-        if rgba.is_empty() {
-            return Err(InfraError::Config(
-                "at least one [colors] gradient stop is required".to_string(),
-            ));
-        }
+        let cava_bars = wallpaper_cava_domain::cava_bars(config)?;
+        let gradient_bytes = gradient_ssbo_bytes(&default.gradient);
         Ok(SelfParams {
-            bar_count,
-            gap,
-            background,
+            cava_bars,
+            default,
+            outputs,
             preferred_output: config.general.preferred_output.clone(),
-            gradient_bytes: gradient_ssbo_bytes(&rgba),
+            gradient_bytes,
             vertex_src,
             fragment_src,
         })
@@ -311,7 +315,7 @@ impl WallpaperShell {
             gl::DeleteShader(frag);
         }
 
-        let indices = indices_for_bars(params.bar_count);
+        let indices = indices_for_bars(params.cava_bars);
         let window_size_name = std::ffi::CString::new("WindowSize")
             .map_err(|_| InfraError::Gl("internal uniform name contains nul".to_string()))?;
 
@@ -368,10 +372,10 @@ impl WallpaperShell {
             shader_program: program,
             vao,
             vbo,
+            ssbo,
             window_size_location,
-            bar_count: params.bar_count,
-            gap: params.gap,
-            background: params.background,
+            default: params.default,
+            outputs: params.outputs,
             preferred_output: params.preferred_output,
             setup: Some(SetupSurface {
                 surface,
@@ -385,8 +389,8 @@ impl WallpaperShell {
 
     /// Render one frame on every configured view.
     ///
-    /// Vertices are computed once, uploaded once, then drawn once per
-    /// view (each view is current in turn — one shared context).
+    /// Levels are fetched once at cava resolution, then resampled per
+    /// view; each view uploads its own vertices + gradient and draws.
     ///
     /// # Errors
     /// Returns [`InfraError`] when the audio source, GL upload, or buffer
@@ -405,32 +409,9 @@ impl WallpaperShell {
         }
         // Deterministic order: stable frame pacing across outputs.
         active.sort_unstable();
-        let levels = self.cava.next_levels()?;
-        let vertices = vertices_for_levels(&levels, self.bar_count, self.gap)?;
-        let indices = indices_for_bars(self.bar_count);
-        let vertex_bytes = (vertices.len() * std::mem::size_of::<f32>()).cast_signed();
-        let index_count = GLsizei::try_from(indices.len())
-            .map_err(|_| InfraError::Gl("index count does not fit GLsizei".to_string()))?;
-        // Upload once, on the first view's surface.
-        let first = active[0];
-        self.make_view_current(first)?;
-        // SAFETY: `vao`/`vbo` are live objects owned by `self`; `vertices`
-        // outlives the synchronous upload; the size describes the slice.
-        unsafe {
-            gl::BindVertexArray(self.vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                vertex_bytes,
-                vertices.as_ptr().cast(),
-                gl::DYNAMIC_DRAW,
-            );
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::BindVertexArray(0);
-        }
+        let full_levels = self.cava.next_levels()?;
         for i in active {
-            self.draw_view(i, index_count, qh)?;
+            self.render_view(i, &full_levels, qh)?;
         }
         Ok(())
     }
@@ -449,24 +430,50 @@ impl WallpaperShell {
 
     /// Draw the already-uploaded frame on one view and swap its buffers.
     #[allow(clippy::cast_precision_loss)] // compositor pixels, far below 2^24: exact.
-    fn draw_view(
+    /// Render the full-resolution levels on one view: resample to the
+    /// view's bar count, upload vertices + gradient, draw, swap.
+    #[allow(clippy::cast_precision_loss)] // compositor pixels, far below 2^24: exact.
+    fn render_view(
         &mut self,
         i: usize,
-        index_count: GLsizei,
+        full_levels: &[f32],
         qh: &QueueHandle<Self>,
     ) -> Result<(), InfraError> {
         let view = &self.views[i];
+        let (bars, gap, background) = (view.bars, view.gap, view.background);
         let (w, h) = (view.width, view.height);
+        let (index_count, gradient_bytes) = (view.index_count, view.gradient_bytes.clone());
+        let levels = resample_levels(full_levels, bars.get() as usize);
+        let vertices = vertices_for_levels(&levels, bars, gap)?;
+        let vertex_bytes = (vertices.len() * std::mem::size_of::<f32>()).cast_signed();
+        let gradient_len = gradient_bytes.len().cast_signed();
         self.make_view_current(i)?;
-        // SAFETY: context is current for this view; counts describe the
-        // shared buffers uploaded in `draw`.
+        // SAFETY: context is current for this view; all sizes describe
+        // the slices passed; the SSBO layout matches the shader block.
         unsafe {
             gl::BindVertexArray(self.vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                vertex_bytes,
+                vertices.as_ptr().cast(),
+                gl::DYNAMIC_DRAW,
+            );
+            gl::BindBuffer(gl::SHADER_STORAGE_BUFFER, self.ssbo);
+            gl::BufferData(
+                gl::SHADER_STORAGE_BUFFER,
+                gradient_len,
+                gradient_bytes.as_ptr().cast(),
+                gl::DYNAMIC_DRAW,
+            );
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::Viewport(0, 0, w.cast_signed(), h.cast_signed());
             gl::ClearColor(
-                self.background.r(),
-                self.background.g(),
-                self.background.b(),
-                self.background.a(),
+                background.r(),
+                background.g(),
+                background.b(),
+                background.a(),
             );
             gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::UseProgram(self.shader_program);
@@ -521,6 +528,15 @@ impl WallpaperShell {
         height: u32,
     ) -> Result<(), InfraError> {
         self.retire_setup();
+        // Per-output settings, falling back to the global default.
+        let resolved: &ResolvedOutput = self
+            .outputs
+            .get(name.as_deref().unwrap_or(""))
+            .unwrap_or(&self.default);
+        let (bars, gap, background) = (resolved.bars, resolved.gap, resolved.background);
+        let gradient_bytes = gradient_ssbo_bytes(&resolved.gradient);
+        let index_count = GLsizei::try_from(bars.get() * 6)
+            .map_err(|_| InfraError::Gl("bar count does not fit GLsizei".to_string()))?;
         let surface = self.compositor.create_surface(qh);
         let empty_region = self.compositor.wl_compositor().create_region(qh, ());
         surface.set_input_region(Some(&empty_region));
@@ -560,6 +576,11 @@ impl WallpaperShell {
             width,
             height,
             configured: false,
+            bars,
+            index_count,
+            gap,
+            background,
+            gradient_bytes,
         });
         Ok(())
     }

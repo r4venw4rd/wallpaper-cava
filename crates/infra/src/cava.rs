@@ -48,11 +48,12 @@ struct CavaConfig {
     output: HashMap<String, String>,
 }
 
-/// Render the generated cava config for `wallpaper` settings.
+/// Render the generated cava config, running at `bars` (the max over all
+/// views — views with fewer bars get a resampled copy).
 ///
 /// # Errors
 /// Returns [`InfraError::Cava`] when TOML serialization fails.
-pub fn cava_config_toml(config: &Config) -> Result<String, InfraError> {
+pub fn cava_config_toml(config: &Config, bars: BarCount) -> Result<String, InfraError> {
     let output: HashMap<String, String> = HashMap::from([
         ("method".to_string(), "raw".to_string()),
         ("raw_target".to_string(), "/dev/stdout".to_string()),
@@ -61,7 +62,7 @@ pub fn cava_config_toml(config: &Config) -> Result<String, InfraError> {
     let cava = CavaConfig {
         general: CavaGeneral {
             framerate: config.general.framerate,
-            bars: config.bars.amount,
+            bars: bars.get(),
             autosens: config.general.autosens,
             sensitivity: config.general.sensitivity,
         },
@@ -87,14 +88,16 @@ pub struct CavaSource {
 }
 
 impl CavaSource {
-    /// Spawn `cava` with a config derived from `config`.
+    /// Spawn `cava` running at `bars` (see [`cava_bars`]).
+    ///
+    /// [`cava_bars`]: wallpaper_cava_domain::cava_bars
     ///
     /// # Errors
     /// Returns [`InfraError`] when the binary is missing, pipes fail, or
     /// the generated config cannot be delivered.
-    #[instrument(skip(config), fields(bars = config.bars.amount))]
+    #[instrument(skip(config), fields(bars = bars.get()))]
     pub fn spawn(config: &Config, bars: BarCount) -> Result<Self, InfraError> {
-        let toml = cava_config_toml(config)?;
+        let toml = cava_config_toml(config, bars)?;
         let mut child = Command::new("cava")
             .arg("-p")
             .arg("/dev/stdin")

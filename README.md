@@ -28,11 +28,30 @@ Validate a config without a compositor:
 ./target/release/wallpaper-cava --config config-dp1.toml --check-config
 ```
 
-## Multi-monitor
+## Multi-monitor (single instance, single config)
 
-- No `preferred_output` → one view per output, all rendering the same bars.
-- `preferred_output = "DP-1"` → only that output gets a view. Run one
-  instance per monitor with its own config (see `config-dp1.toml`,
-  `config-dp2.toml`, `config-hdmi.toml`).
-- Output plug/unplug, mode changes: views bind/unbind/resize live, no
-  full surface re-creation.
+No `preferred_output` → one view per output, all rendering the same bars.
+Per-output tuning lives in the same `config.toml`:
+
+```toml
+[outputs."DP-1"]
+bars_amount = 96
+bars_gap = 0.2
+background_color = { hex = "#000000", alpha = 0.0 }
+
+[outputs."DP-1".colors]
+gradient_color_1 = '#20000077'
+gradient_color_2 = '#dc143cdd'
+
+[outputs."HDMI-A-1"]
+bars_amount = 32
+```
+
+Anything unset falls back to the global `[bars]`/`[colors]`/`[general]`
+sections. Cava runs at the max `bars_amount` across outputs; smaller views
+get a resampled copy (average-pool down, lerp up). Output plug/unplug and
+mode changes bind/unbind/resize views live — no full re-creation.
+
+The old flow still works: set `preferred_output = "DP-1"` (or keep one
+config per monitor, e.g. `config-dp1.toml`) to pin an instance to a single
+output.

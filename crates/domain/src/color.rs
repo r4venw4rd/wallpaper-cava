@@ -52,6 +52,30 @@ pub fn array_from_config_color(color: &ConfigColor) -> Result<Rgba, DomainError>
     }
 }
 
+/// Resolve a gradient stop map into sorted [`Rgba`] stops.
+///
+/// Keys sort lexicographically, so `gradient_color_10` cannot silently
+/// land before `gradient_color_2` (`HashMap` order is random).
+///
+/// # Errors
+/// Returns [`DomainError`] when the map is empty or any stop is malformed.
+pub fn resolve_gradient<S: std::hash::BuildHasher>(
+    stops: &std::collections::HashMap<String, ConfigColor, S>,
+) -> Result<Vec<Rgba>, DomainError> {
+    let mut sorted: Vec<(&String, &ConfigColor)> = stops.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let mut out = Vec::with_capacity(sorted.len());
+    for (_, color) in sorted {
+        out.push(array_from_config_color(color)?);
+    }
+    if out.is_empty() {
+        return Err(DomainError::InvalidHexColor(
+            "at least one gradient stop is required".to_string(),
+        ));
+    }
+    Ok(out)
+}
+
 /// Pack gradient stops into the SSBO byte layout the fragment shader expects:
 /// little-endian `int count`, 12 padding bytes (std430 `vec4` alignment),
 /// then packed `vec4` colors.

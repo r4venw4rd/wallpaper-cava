@@ -97,9 +97,7 @@ fn run() -> anyhow::Result<()> {
         .with_context(|| format!("parsing config {}", args.config_path))?;
 
     // Fail fast on invalid ranges before touching Wayland/EGL.
-    let bar_count = config.bar_count()?;
     let framerate = config.framerate()?;
-    let gap = config.gap_ratio()?;
     let params = WallpaperShell::collect_params(
         &config,
         VERTEX_SHADER_SRC.to_string(),
@@ -108,17 +106,28 @@ fn run() -> anyhow::Result<()> {
     if args.check_only {
         tracing::info!(
             config = %args.config_path,
-            bars = bar_count.get(),
+            cava_bars = params.cava_bars.get(),
             framerate = framerate.get(),
-            gap = gap.get(),
-            output = ?config.general.preferred_output,
+            default_bars = params.default.bars.get(),
+            outputs = params.outputs.len(),
             "config OK"
         );
+        let mut names: Vec<&String> = params.outputs.keys().collect();
+        names.sort();
+        for name in names {
+            let out = &params.outputs[name];
+            tracing::info!(
+                output = %name,
+                bars = out.bars.get(),
+                gradient_stops = out.gradient.len(),
+                "output OK"
+            );
+        }
         return Ok(());
     }
     let frame_duration = Duration::from_secs(1) / framerate.get();
 
-    let cava = CavaSource::spawn(&config, bar_count)?;
+    let cava = CavaSource::spawn(&config, params.cava_bars)?;
 
     let conn = Connection::connect_to_env().context("connecting to Wayland")?;
     let (globals, event_queue) = registry_queue_init(&conn).context("initializing registry")?;

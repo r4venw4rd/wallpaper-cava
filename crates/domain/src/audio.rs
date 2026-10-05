@@ -40,6 +40,57 @@ pub fn parse_cava_frame(bytes: &[u8], bars: BarCount) -> Result<Vec<f32>, Domain
     Ok(out)
 }
 
+/// Resample one frame to `target` bars.
+///
+/// Same count returns the input unchanged. Fewer bars average-pool
+/// proportional buckets; more bars linearly interpolate. Output always
+/// has exactly `target` values in `0.0..=1.0`.
+///
+/// # Examples
+///
+/// ```
+/// use wallpaper_cava_domain::audio::resample_levels;
+/// assert_eq!(resample_levels(&[0.0, 1.0], 2), vec![0.0, 1.0]);
+/// assert_eq!(resample_levels(&[0.0, 0.0, 1.0, 1.0], 2), vec![0.0, 1.0]);
+/// ```
+#[must_use]
+#[allow(clippy::cast_precision_loss)] // indices < 2^24 in practice; ratios only.
+pub fn resample_levels(levels: &[f32], target: usize) -> Vec<f32> {
+    if target == 0 {
+        return Vec::new();
+    }
+    if levels.is_empty() {
+        return vec![0.0; target];
+    }
+    if levels.len() == target {
+        return levels.to_vec();
+    }
+    let src = levels.len();
+    if target < src {
+        // Average-pooling: bucket `i` covers [i*src/target, (i+1)*src/target).
+        (0..target)
+            .map(|i| {
+                let start = i * src / target;
+                let end = (i + 1) * src / target;
+                let slice = &levels[start..end.max(start + 1).min(src)];
+                slice.iter().sum::<f32>() / slice.len() as f32
+            })
+            .collect()
+    } else {
+        // Linear interpolation between source samples. `lo` uses integer
+        // math: floor(i * (src-1) / target).
+        (0..target)
+            .map(|i| {
+                let num = i * (src - 1);
+                let lo = num / target;
+                let hi = (lo + 1).min(src - 1);
+                let frac = (num % target) as f32 / target as f32;
+                levels[lo] * (1.0 - frac) + levels[hi] * frac
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -67,6 +118,24 @@ mod tests {
             }
             let levels = parse_cava_frame(&bytes, bars).unwrap();
             prop_assert!(levels.iter().all(|l| (0.0..=1.0).contains(l)));
+        }
+
+        #[test]
+        fn resample_output_len_matches_target(
+            levels in proptest::collection::vec(0.0f32..=1.0, 1..=64),
+            target in 1usize..=64,
+        ) {
+            prop_assert_eq!(resample_levels(&levels, target).len(), target);
+        }
+
+        #[test]
+        fn resample_stays_in_unit_range(
+            levels in proptest::collection::vec(0.0f32..=1.0, 1..=64),
+            target in 1usize..=64,
+        ) {
+            prop_assert!(resample_levels(&levels, target)
+                .iter()
+                .all(|l| (0.0..=1.0).contains(l)));
         }
     }
 }
