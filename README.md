@@ -40,6 +40,9 @@ Validate a config without a compositor:
 ./target/release/wallpaper-cava --config config-dp1.toml --check-config
 ```
 
+Cava binary: `cava` from `PATH` by default, or pin an absolute path via
+`CAVA_BIN=/usr/bin/cava`.
+
 ## Multi-monitor (single instance, single config)
 
 No `preferred_output` → one view per output, all rendering the same bars.
