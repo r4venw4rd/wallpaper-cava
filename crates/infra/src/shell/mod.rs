@@ -68,6 +68,8 @@ pub struct WallpaperShell {
     pub(super) compositor: CompositorState,
     /// Spectrum source (cava child).
     pub(super) cava: CavaSource,
+    /// Consecutive cava read failures (log throttle; reset on success).
+    pub(super) cava_failures: u32,
     /// Chosen EGL config (shared by all views).
     pub(super) egl_config: egl::Config,
     /// Shared EGL context.

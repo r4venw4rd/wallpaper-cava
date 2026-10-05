@@ -3,7 +3,7 @@
 use std::ptr;
 
 use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
-use tracing::instrument;
+use tracing::{debug, error, instrument};
 use wallpaper_cava_domain::{resample_levels, vertices_for_levels, AudioSource};
 
 use super::WallpaperShell;
@@ -18,9 +18,14 @@ impl WallpaperShell {
     /// Levels are fetched once at cava resolution, then resampled per
     /// view; each view uploads its own vertices + gradient and draws.
     ///
+    /// A dead cava holds the last frame instead of erroring every
+    /// callback: audio failures are throttled-logged here (first + every
+    /// 600th) and reported as `Ok`, so a 60fps loop cannot spam the log.
+    /// GL/swap failures still propagate as [`InfraError`].
+    ///
     /// # Errors
-    /// Returns [`InfraError`] when the audio source, GL upload, or buffer
-    /// swap fails. Handlers log and continue instead of propagating.
+    /// Returns [`InfraError`] when the GL upload or buffer swap fails.
+    /// Handlers log and continue instead of propagating.
     #[instrument(skip(self, _conn, qh), fields(views = self.views.len()))]
     pub fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) -> Result<(), InfraError> {
         let mut active: Vec<usize> = self
@@ -35,7 +40,23 @@ impl WallpaperShell {
         }
         // Deterministic order: stable frame pacing across outputs.
         active.sort_unstable();
-        let full_levels = self.cava.next_levels()?;
+        let full_levels = match self.cava.next_levels() {
+            Ok(levels) => {
+                self.cava_failures = 0;
+                levels
+            }
+            Err(e) => {
+                self.cava_failures = self.cava_failures.saturating_add(1);
+                // ponytail: throttle — first + every 600th (≈10s at 60fps),
+                // debug in between. The views keep their last frame.
+                if self.cava_failures == 1 || self.cava_failures.is_multiple_of(600) {
+                    error!(error = %e, consecutive_failures = self.cava_failures, "cava read failed, holding last frame");
+                } else {
+                    debug!(error = %e, consecutive_failures = self.cava_failures, "cava read failed");
+                }
+                return Ok(());
+            }
+        };
         for i in active {
             self.render_view(i, &full_levels, qh)?;
         }

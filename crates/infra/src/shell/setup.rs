@@ -82,6 +82,7 @@ impl WallpaperShell {
             layer_shell,
             compositor,
             cava,
+            cava_failures: 0,
             egl_config,
             egl_context,
             egl_display,
