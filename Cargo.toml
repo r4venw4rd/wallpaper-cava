@@ -5,6 +5,7 @@ members = [
     "crates/application",
     "crates/config",
     "crates/audio",
+    "crates/render",
     "apps/wallpaper-cava",
 ]
 resolver = "2"

@@ -1,0 +1,18 @@
+[package]
+name = "wallpaper-cava-render"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wallpaper-cava-config = { path = "../config" }
+wallpaper-cava-audio = { path = "../audio" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+gl = { workspace = true }
+khronos-egl = { workspace = true }
+smithay-client-toolkit = { workspace = true }
+wayland-egl = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+toml = { workspace = true }
