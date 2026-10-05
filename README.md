@@ -8,6 +8,13 @@ keeps the protocol behavior and restructures everything around it.
 Spectrum visualizer on the Wayland wallpaper layer (`wlr-layer-shell`,
 `Layer::Bottom`). Spawns `cava` for DSP, renders bars with OpenGL.
 
+## Compatibility
+
+Works on any compositor speaking `wlr-layer-shell` (Hyprland, Sway, …).
+Tested on Hyprland only — other compositors should work but are untested.
+To find your output names: `hyprctl monitors all` (Hyprland),
+`swaymsg -t get_outputs` (Sway), or `wlr-randr` (generic).
+
 ## Layout (Cargo workspace)
 
 - `crates/domain` — pure logic: validated config newtypes, color parsing,

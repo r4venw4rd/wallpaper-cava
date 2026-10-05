@@ -36,7 +36,8 @@ gradient_color_8 = { hex = "#cba6f7", alpha = 1.0 }  # Mauve     · peak
 # noise_reduction = 0.5 # 0 fast/noisy · 1 slow/smooth
 
 # --- Per-monitor settings ----------------------------------------------------
-# Names: `hyprctl monitors all`. Anything unset falls back to the globals.
+# Names: `hyprctl monitors all` (Hyprland), `swaymsg -t get_outputs` (Sway),
+# or `wlr-randr`. Anything unset falls back to the globals.
 # Cava runs at the MAX bars_amount across outputs; smaller views resample.
 
 [outputs."DP-1"]
