@@ -1,0 +1,14 @@
+[package]
+name = "wallpaper-cava-audio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wallpaper-cava-config = { path = "../config" }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
