@@ -1,45 +1,46 @@
 # ===========================================================================
-#  wallpaper-cava  ·  tek config, tek instance, tüm monitörler
-#  Doğrula: wallpaper-cava --config config.toml --check-config
+#  wallpaper-cava  ·  one config, one instance, all monitors
+#  Validate: wallpaper-cava --config config.toml --check-config
 # ===========================================================================
 
-# --- Genel -----------------------------------------------------------------
+# --- General -----------------------------------------------------------------
 [general]
 framerate        = 60                              # 1-240
-background_color = { hex = "#000000", alpha = 0.0 } # şeffaf: duvar kağıdı görünür
-sensitivity      = 40                              # cava'ya aynen geçiyor
+background_color = { hex = "#000000", alpha = 0.0 } # transparent: wallpaper shows through
+sensitivity      = 40                              # passed straight to cava
 
-# Tek monitöre kilitle (eski usul). Boşken HER output'a bir view açılır;
-# ince ayar aşağıdaki [outputs.*] bölümlerinde.
+# Pin to a single output (legacy). Leave commented to open one view per
+# output from this single instance; per-output tuning lives in [outputs.*].
 # preferred_output = "DP-1"
 
-# --- Barlar ----------------------------------------------------------------
+# --- Bars --------------------------------------------------------------------
 [bars]
-amount = 64    # 1-1024 (cava, listedeki MAX değerde koşar)
-gap    = 0.15  # bar genişliğinin oranı (0.0-5.0)
+amount = 64    # 1-1024 (cava runs at the MAX across outputs)
+gap    = 0.15  # as a fraction of bar width (0.0-5.0)
 
-# --- Renkler: Mint/Teal -> Cyan -> Deep Blue -> Mauve -----------------------
+# --- Colors: Mint/Teal -> Cyan -> Deep Blue -> Mauve --------------------------
 [colors]
-gradient_color_1 = { hex = "#94e2d5", alpha = 0.85 } # Mint      · alt neonlar
-gradient_color_2 = { hex = "#a6e3a1", alpha = 0.85 } # Yeşil     · yumuşak geçiş
-gradient_color_3 = { hex = "#89dceb", alpha = 0.90 } # Sky       · camgöbeği
-gradient_color_4 = { hex = "#74c7ec", alpha = 0.90 } # Sapphire  · mavi
-gradient_color_5 = { hex = "#89b4fa", alpha = 0.95 } # Lavender  · derin mavi
-gradient_color_6 = { hex = "#b4befe", alpha = 0.95 } # Açık mavi · yukarı loşlaşma
-gradient_color_7 = { hex = "#f5c2e7", alpha = 1.0 }  # Pembe     · dikey neonlar
-gradient_color_8 = { hex = "#cba6f7", alpha = 1.0 }  # Mauve     · tepe noktası
+gradient_color_1 = { hex = "#94e2d5", alpha = 0.85 } # Mint      · low neon glow
+gradient_color_2 = { hex = "#a6e3a1", alpha = 0.85 } # Green     · soft transition
+gradient_color_3 = { hex = "#89dceb", alpha = 0.90 } # Sky       · cyan
+gradient_color_4 = { hex = "#74c7ec", alpha = 0.90 } # Sapphire  · blue
+gradient_color_5 = { hex = "#89b4fa", alpha = 0.95 } # Lavender  · deep blue
+gradient_color_6 = { hex = "#b4befe", alpha = 0.95 } # Light blue· fading upward
+gradient_color_7 = { hex = "#f5c2e7", alpha = 1.0 }  # Pink      · vertical neon
+gradient_color_8 = { hex = "#cba6f7", alpha = 1.0 }  # Mauve     · peak
 
-# --- Yumuşatma (cava'ya aynen geçiyor) --------------------------------------
+# --- Smoothing (passed straight to cava) -------------------------------------
 [smoothing]
-# monstercat     = 0    # 0 kapalı
-# waves          = 0    # ham github cava'sında düzgün çalışır
-# noise_reduction = 0.5 # 0 hızlı/noisy · 1 yavaş/pürüzsüz
+# monstercat      = 0   # 0 disables
+# waves           = 0   # works properly with a fresh github cava build
+# noise_reduction = 0.5 # 0 fast/noisy · 1 slow/smooth
 
-# --- Monitör bazında ayar ---------------------------------------------------
-# İsimler: `hyprctl monitors all`. Yazılmayan her şey globale düşer.
+# --- Per-monitor settings ----------------------------------------------------
+# Names: `hyprctl monitors all`. Anything unset falls back to the globals.
+# Cava runs at the MAX bars_amount across outputs; smaller views resample.
 
 [outputs."DP-1"]
-# Globali kullanıyor. Örnekler:
+# Uses the global defaults. Examples:
 # bars_amount      = 96
 # bars_gap         = 0.2
 # background_color = { hex = "#000000", alpha = 0.0 }
