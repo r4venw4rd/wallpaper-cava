@@ -4,10 +4,28 @@ use std::time::Duration;
 
 use wallpaper_cava_domain::{vertices_for_levels, AudioSource, BarCount, DomainError, GapRatio};
 
+/// Target time between frames for a validated framerate value.
+///
+/// # Examples
+///
+/// ```
+/// use wallpaper_cava_application::services::frame::frame_duration;
+/// assert!(frame_duration(60) <= std::time::Duration::from_millis(17));
+/// ```
+#[must_use]
+pub fn frame_duration(framerate: u32) -> Duration {
+    Duration::from_secs(1) / framerate.max(1)
+}
+
 /// Loop timing + vertex pipeline for one wallpaper instance.
 ///
 /// Holds a borrowed [`AudioSource`] (dependency injection): production
 /// passes the cava adapter, tests pass a stub — no IO is mocked.
+///
+/// This is the contract headless/test harnesses program against. The live
+/// Wayland shell performs the same two calls (`next_levels` +
+/// [`vertices_for_levels`]) inline, because the calloop callbacks own the
+/// source and cannot hand it out per frame.
 pub struct FrameService<'a, S: AudioSource> {
     /// Injected spectrum source.
     source: &'a mut S,
@@ -35,7 +53,7 @@ impl<'a, S: AudioSource> FrameService<'a, S> {
     /// Target time between frames.
     #[must_use]
     pub fn frame_duration(&self) -> Duration {
-        Duration::from_secs(1) / self.framerate
+        frame_duration(self.framerate)
     }
 
     /// Fetch the next levels and expand them into NDC vertices.

@@ -13,12 +13,12 @@
 extern crate khronos_egl as egl;
 
 use std::fs;
-use std::time::Duration;
 
 use anyhow::Context;
 use smithay_client_toolkit::reexports::calloop::EventLoop;
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::{globals::registry_queue_init, Connection};
+use wallpaper_cava_application::services::frame::frame_duration;
 use wallpaper_cava_domain::Config;
 use wallpaper_cava_infra::{CavaSource, WallpaperShell};
 
@@ -125,7 +125,7 @@ fn run() -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    let frame_duration = Duration::from_secs(1) / framerate.get();
+    let frame_duration = frame_duration(framerate.get());
 
     let cava = CavaSource::spawn(&config, params.cava_bars)?;
 
